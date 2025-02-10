@@ -1,342 +1,401 @@
 ﻿using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
+
 [RequireComponent(typeof(Rigidbody))]
-public class PlayerMovementScript : MonoBehaviour {
-	Rigidbody rb;
+public class PlayerMovementScript : MonoBehaviour
+{
+    // Components and Transforms
+    private Rigidbody rb;
+    [Tooltip("Current player's speed")]
+    public float currentSpeed;
+    [Tooltip("Assign player's camera here")]
+    [HideInInspector] public Transform cameraMain;
+    [Tooltip("Bullet spawn transform (child of camera)")]
+    [HideInInspector] public Transform bulletSpawn;
 
-	[Tooltip("Current players speed")]
-	public float currentSpeed;
-	[Tooltip("Assign players camera here")]
-	[HideInInspector]public Transform cameraMain;
-	[Tooltip("Force that moves player into jump")]
-	public float jumpForce = 500;
-	[Tooltip("Position of the camera inside the player")]
-	[HideInInspector]public Vector3 cameraPosition;
+    // Movement and sprint variables
+    [Tooltip("Force applied for jumping")]
+    public float jumpForce = 500f;
+    [Tooltip("Normal maximum speed")]
+    public int normalMaxSpeed = 5;
+    [Tooltip("Maximum speed when sprinting (holding Shift)")]
+    public int sprintMaxSpeed = 8;
+    [Tooltip("Acceleration force when moving")]
+    public float accelerationSpeed = 50000f;
+    [Tooltip("Multiplier applied to acceleration when sprinting")]
+    public float sprintMultiplier = 1.5f;
+    [Tooltip("Deceleration factor when no movement input is given")]
+    public float deaccelerationSpeed = 15.0f;
 
-	/*
-	 * Getting the Players rigidbody component.
-	 * And grabbing the mainCamera from Players child transform.
-	 */
-	void Awake(){
-		rb = GetComponent<Rigidbody>();
-		cameraMain = transform.Find("Main Camera").transform;
-		bulletSpawn = cameraMain.Find ("BulletSpawn").transform;
-		ignoreLayer = 1 << LayerMask.NameToLayer ("Player");
+    // Mouse camera control variables
+    [Tooltip("Mouse sensitivity for camera control")]
+    public float mouseSensitivity = 100f;
+    // This stores the accumulated vertical rotation (pitch) so that we can clamp it.
+    private float verticalRotation = 0f;
 
-	}
-	private Vector3 slowdownV;
-	private Vector2 horizontalMovement;
-	/*
-	* Raycasting for meele attacks and input movement handling here.
-	*/
-	void FixedUpdate(){
-		RaycastForMeleeAttacks ();
+    // Audio sources for various sounds
+    [Tooltip("Sound played when player jumps")]
+    public AudioSource _jumpSound;
+    [Tooltip("Sound played when player is walking")]
+    public AudioSource _walkSound;
+    [Tooltip("Sound played when player is running")]
+    public AudioSource _runSound;
+    [Tooltip("Sound played when bullet hits target")]
+    public AudioSource _hitSound;
+    [Tooltip("Sound played when reloading weapon or related actions")]
+    public AudioSource _freakingZombiesSound;
 
-		PlayerMovementLogic ();
-	}
-	/*
-	* Accordingly to input adds force and if magnitude is bigger it will clamp it.
-	* If player leaves keys it will deaccelerate
-	*/
-	void PlayerMovementLogic(){
-		currentSpeed = rb.linearVelocity.magnitude;
-		horizontalMovement = new Vector2 (rb.linearVelocity.x, rb.linearVelocity.z);
-		if (horizontalMovement.magnitude > maxSpeed){
-			horizontalMovement = horizontalMovement.normalized;
-			horizontalMovement *= maxSpeed;    
-		}
-		rb.linearVelocity = new Vector3 (
-			horizontalMovement.x,
-			rb.linearVelocity.y,
-			horizontalMovement.y
-		);
-		if (grounded){
-			rb.linearVelocity = Vector3.SmoothDamp(rb.linearVelocity,
-				new Vector3(0,rb.linearVelocity.y,0),
-				ref slowdownV,
-				deaccelerationSpeed);
-		}
+    // Internal variables for movement smoothing
+    private Vector3 slowdownV;
+    private Vector2 horizontalMovement;
+    // Ground check flag
+    public bool grounded;
 
-		if (grounded) {
-			rb.AddRelativeForce (Input.GetAxis ("Horizontal") * accelerationSpeed * Time.deltaTime, 0, Input.GetAxis ("Vertical") * accelerationSpeed * Time.deltaTime);
-		} else {
-			rb.AddRelativeForce (Input.GetAxis ("Horizontal") * accelerationSpeed / 2 * Time.deltaTime, 0, Input.GetAxis ("Vertical") * accelerationSpeed / 2 * Time.deltaTime);
+    // Variables for melee and shooting (kept intact from your original script)
+    private float meleeAttack_cooldown;
+    private string currentWeapo;
+    private LayerMask ignoreLayer;
+    private float rayDetectorMeeleSpace = 0.15f;
+    private float offsetStart = 0.05f;
+    // Melee attack flag to prevent repeat calls
+    public bool been_to_meele_anim = false;
+    // Blood effect prefab for melee hit feedback
+    [Tooltip("Blood effect prefab for melee attacks")]
+    public GameObject bloodEffect;
 
-		}
-		/*
-		 * Slippery issues fixed here
-		 */
-		if (Input.GetAxis ("Horizontal") != 0 || Input.GetAxis ("Vertical") != 0) {
-			deaccelerationSpeed = 0.5f;
-		} else {
-			deaccelerationSpeed = 0.1f;
-		}
-	}
-	/*
-	* Handles jumping and ads the force and sounds.
-	*/
-	void Jumping(){
-		if (Input.GetKeyDown (KeyCode.Space) && grounded) {
-			rb.AddRelativeForce (Vector3.up * jumpForce);
-			if (_jumpSound)
-				_jumpSound.Play ();
-			else
-				print ("Missig jump sound.");
-			_walkSound.Stop ();
-			_runSound.Stop ();
-		}
-	}
-	/*
-	* Update loop calling other stuff
-	*/
-	void Update(){
-		
+    void Awake()
+    {
+        rb = GetComponent<Rigidbody>();
+        // Assumes the main camera is a child named "Main Camera"
+        cameraMain = transform.Find("Main Camera").transform;
+        // Assumes a child of the camera called "BulletSpawn" exists for raycasting melee/shooting hits
+        bulletSpawn = cameraMain.Find("BulletSpawn").transform;
+        // Set the ignoreLayer to the "Player" layer so that raycasts ignore the player’s collider
+        ignoreLayer = 1 << LayerMask.NameToLayer("Player");
+    }
 
-		Jumping ();
+    void FixedUpdate()
+    {
+        RaycastForMeleeAttacks();
+        PlayerMovementLogic();
+    }
 
-		Crouching();
+    void Update()
+    {
+        // Handle mouse input to control the camera
+        HandleMouseCameraControl();
+        // Handle jumping input
+        Jumping();
+        // Handle crouching (scales the player down/up)
+        Crouching();
+        // Manage footstep sounds based on movement state
+        WalkingSound();
+    }
 
-		WalkingSound ();
+    /// <summary>
+    /// Processes movement input (WSAD) and applies forces.
+    /// Sprinting is enabled when the left Shift key is held while grounded.
+    /// </summary>
+    void PlayerMovementLogic()
+    {
+        // Determine the effective maximum speed and acceleration based on sprint input.
+        int currentMaxSpeed = normalMaxSpeed;
+        float currentAcceleration = accelerationSpeed;
+        if (Input.GetKey(KeyCode.LeftShift) && grounded)
+        {
+            currentMaxSpeed = sprintMaxSpeed;
+            currentAcceleration = accelerationSpeed * sprintMultiplier;
+        }
 
+        // Calculate the current horizontal speed
+        currentSpeed = rb.linearVelocity.magnitude;
+        horizontalMovement = new Vector2(rb.linearVelocity.x, rb.linearVelocity.z);
+        if (horizontalMovement.magnitude > currentMaxSpeed)
+        {
+            horizontalMovement = horizontalMovement.normalized * currentMaxSpeed;
+        }
+        rb.linearVelocity = new Vector3(horizontalMovement.x, rb.linearVelocity.y, horizontalMovement.y);
 
-	}//end update
+        // Smooth deceleration if no input is detected
+        if (grounded)
+        {
+            rb.linearVelocity = Vector3.SmoothDamp(rb.linearVelocity, new Vector3(0, rb.linearVelocity.y, 0), ref slowdownV, deaccelerationSpeed * Time.deltaTime);
+        }
 
-	/*
-	* Checks if player is grounded and plays the sound accorindlgy to his speed
-	*/
-	void WalkingSound(){
-		if (_walkSound && _runSound) {
-			if (RayCastGrounded ()) { //for walk sounsd using this because suraface is not straigh			
-				if (currentSpeed > 1) {
-					//				print ("unutra sam");
-					if (maxSpeed == 3) {
-						//	print ("tu sem");
-						if (!_walkSound.isPlaying) {
-							//	print ("playam hod");
-							_walkSound.Play ();
-							_runSound.Stop ();
-						}					
-					} else if (maxSpeed == 5) {
-						//	print ("NE tu sem");
+        // Read input for movement
+        float moveHorizontal = Input.GetAxis("Horizontal");
+        float moveVertical = Input.GetAxis("Vertical");
 
-						if (!_runSound.isPlaying) {
-							_walkSound.Stop ();
-							_runSound.Play ();
-						}
-					}
-				} else {
-					_walkSound.Stop ();
-					_runSound.Stop ();
-				}
-			} else {
-				_walkSound.Stop ();
-				_runSound.Stop ();
-			}
-		} else {
-			print ("Missing walk and running sounds.");
-		}
+        // Apply movement force (use half force when airborne)
+        if (grounded)
+        {
+            rb.AddRelativeForce(moveHorizontal * currentAcceleration * Time.deltaTime, 0, moveVertical * currentAcceleration * Time.deltaTime);
+        }
+        else
+        {
+            rb.AddRelativeForce(moveHorizontal * currentAcceleration / 2 * Time.deltaTime, 0, moveVertical * currentAcceleration / 2 * Time.deltaTime);
+        }
 
-	}
-	/*
-	* Raycasts down to check if we are grounded along the gorunded method() because if the
-	* floor is curvy it will go ON/OFF constatly this assures us if we are really grounded
-	*/
-	private bool RayCastGrounded(){
-		RaycastHit groundedInfo;
-		if(Physics.Raycast(transform.position, transform.up *-1f, out groundedInfo, 1, ~ignoreLayer)){
-			Debug.DrawRay (transform.position, transform.up * -1f, Color.red, 0.0f);
-			if(groundedInfo.transform != null){
-				//print ("vracam true");
-				return true;
-			}
-			else{
-				//print ("vracam false");
-				return false;
-			}
-		}
-		//print ("nisam if dosao");
+        // Adjust deceleration speed based on whether there is input or not
+        if (moveHorizontal != 0 || moveVertical != 0)
+        {
+            deaccelerationSpeed = 0.5f;
+        }
+        else
+        {
+            deaccelerationSpeed = 0.1f;
+        }
+    }
 
-		return false;
-	}
+    /// <summary>
+    /// Handles mouse input for camera control.
+    /// The player's transform rotates horizontally (yaw) and the camera rotates vertically (pitch) with clamping.
+    /// </summary>
+    void HandleMouseCameraControl()
+    {
+        // Get mouse input along the X and Y axes
+        float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity * Time.deltaTime;
+        float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity * Time.deltaTime;
 
-	/*
-	* If player toggle the crouch it will scale the player to appear that is crouching
-	*/
-	void Crouching(){
-		if(Input.GetKey(KeyCode.C)){
-			transform.localScale = Vector3.Lerp(transform.localScale, new Vector3(1,0.6f,1), Time.deltaTime * 15);
-		}
-		else{
-			transform.localScale = Vector3.Lerp(transform.localScale, new Vector3(1,1,1), Time.deltaTime * 15);
+        // Rotate the player horizontally based on mouse X movement
+        transform.Rotate(Vector3.up * mouseX);
 
-		}
-	}
+        // Adjust vertical rotation for the camera pitch and clamp it between -90 and 90 degrees
+        verticalRotation -= mouseY;
+        verticalRotation = Mathf.Clamp(verticalRotation, -90f, 90f);
 
+        // Apply the vertical rotation to the camera's local rotation so that only the pitch is affected
+        cameraMain.localRotation = Quaternion.Euler(verticalRotation, 0, 0);
+    }
 
-	[Tooltip("The maximum speed you want to achieve")]
-	public int maxSpeed = 5;
-	[Tooltip("The higher the number the faster it will stop")]
-	public float deaccelerationSpeed = 15.0f;
+    /// <summary>
+    /// Processes jumping when the Space key is pressed and the player is grounded.
+    /// </summary>
+    void Jumping()
+    {
+        if (Input.GetKeyDown(KeyCode.Space) && grounded)
+        {
+            rb.AddRelativeForce(Vector3.up * jumpForce);
+            if (_jumpSound)
+                _jumpSound.Play();
+            else
+                Debug.Log("Missing jump sound.");
+            if (_walkSound)
+                _walkSound.Stop();
+            if (_runSound)
+                _runSound.Stop();
+        }
+    }
 
+    /// <summary>
+    /// Scales the player to simulate crouching when the 'C' key is held down.
+    /// </summary>
+    void Crouching()
+    {
+        if (Input.GetKey(KeyCode.C))
+        {
+            transform.localScale = Vector3.Lerp(transform.localScale, new Vector3(1, 0.6f, 1), Time.deltaTime * 15);
+        }
+        else
+        {
+            transform.localScale = Vector3.Lerp(transform.localScale, new Vector3(1, 1, 1), Time.deltaTime * 15);
+        }
+    }
 
-	[Tooltip("Force that is applied when moving forward or backward")]
-	public float accelerationSpeed = 50000.0f;
+    /// <summary>
+    /// Plays walking or running sounds based on the player’s movement and speed.
+    /// </summary>
+    void WalkingSound()
+    {
+        if (_walkSound && _runSound)
+        {
+            if (RayCastGrounded())
+            {
+                if (currentSpeed > 1)
+                {
+                    // Here, we use the normalMaxSpeed value to decide which sound to play.
+                    // (Customize these checks as needed based on your project’s logic.)
+                    if (normalMaxSpeed == 3)
+                    {
+                        if (!_walkSound.isPlaying)
+                        {
+                            _walkSound.Play();
+                            _runSound.Stop();
+                        }
+                    }
+                    else if (normalMaxSpeed == 5)
+                    {
+                        if (!_runSound.isPlaying)
+                        {
+                            _walkSound.Stop();
+                            _runSound.Play();
+                        }
+                    }
+                }
+                else
+                {
+                    _walkSound.Stop();
+                    _runSound.Stop();
+                }
+            }
+            else
+            {
+                _walkSound.Stop();
+                _runSound.Stop();
+            }
+        }
+        else
+        {
+            Debug.Log("Missing walk and running sounds.");
+        }
+    }
 
+    /// <summary>
+    /// Uses a downward raycast to determine if the player is grounded.
+    /// </summary>
+    private bool RayCastGrounded()
+    {
+        RaycastHit groundedInfo;
+        if (Physics.Raycast(transform.position, -transform.up, out groundedInfo, 1, ~ignoreLayer))
+        {
+            Debug.DrawRay(transform.position, -transform.up, Color.red, 0.0f);
+            return groundedInfo.transform != null;
+        }
+        return false;
+    }
 
-	[Tooltip("Tells us weather the player is grounded or not.")]
-	public bool grounded;
-	/*
-	* checks if our player is contacting the ground in the angle less than 60 degrees
-	*	if it is, set groudede to true
-	*/
-	void OnCollisionStay(Collision other){
-		foreach(ContactPoint contact in other.contacts){
-			if(Vector2.Angle(contact.normal,Vector3.up) < 60){
-				grounded = true;
-			}
-		}
-	}
-	/*
-	* On collision exit set grounded to false
-	*/
-	void OnCollisionExit ()
-	{
-		grounded = false;
-	}
+    /// <summary>
+    /// When colliding, sets grounded to true if the contact angle is less than 60°.
+    /// </summary>
+    void OnCollisionStay(Collision other)
+    {
+        foreach (ContactPoint contact in other.contacts)
+        {
+            if (Vector3.Angle(contact.normal, Vector3.up) < 60)
+            {
+                grounded = true;
+            }
+        }
+    }
 
+    /// <summary>
+    /// Resets the grounded flag when collision ends.
+    /// </summary>
+    void OnCollisionExit()
+    {
+        grounded = false;
+    }
 
-	RaycastHit hitInfo;
-	private float meleeAttack_cooldown;
-	private string currentWeapo;
-	[Tooltip("Put 'Player' layer here")]
-	[Header("Shooting Properties")]
-	private LayerMask ignoreLayer;//to ignore player layer
-	Ray ray1, ray2, ray3, ray4, ray5, ray6, ray7, ray8, ray9;
-	private float rayDetectorMeeleSpace = 0.15f;
-	private float offsetStart = 0.05f;
-	[Tooltip("Put BulletSpawn gameobject here, palce from where bullets are created.")]
-	[HideInInspector]
-	public Transform bulletSpawn; //from here we shoot a ray to check where we hit him;
-	/*
-	* This method casts 9 rays in different directions. ( SEE scene tab and you will see 9 rays differently coloured).
-	* Used to widley detect enemy infront and increase meele hit detectivity.
-	* Checks for cooldown after last preformed meele attack.
-	*/
+    /// <summary>
+    /// Casts several rays in a spread pattern to detect melee attacks.
+    /// </summary>
+    private void RaycastForMeleeAttacks()
+    {
+        if (meleeAttack_cooldown > -5)
+        {
+            meleeAttack_cooldown -= 1 * Time.deltaTime;
+        }
 
+        // Check for a gun component (example logic from your original script)
+        GunInventory gunInv = GetComponent<GunInventory>();
+        if (gunInv && gunInv.currentGun)
+        {
+            if (gunInv.currentGun.GetComponent<GunScript>())
+                currentWeapo = "gun";
+        }
 
-	public bool been_to_meele_anim = false;
-	private void RaycastForMeleeAttacks(){
+        // Create rays in multiple directions from the bullet spawn position for extended melee hit detection
+        Ray ray1 = new Ray(bulletSpawn.position + (bulletSpawn.right * offsetStart), bulletSpawn.forward + (bulletSpawn.right * rayDetectorMeeleSpace));
+        Ray ray2 = new Ray(bulletSpawn.position - (bulletSpawn.right * offsetStart), bulletSpawn.forward - (bulletSpawn.right * rayDetectorMeeleSpace));
+        Ray ray3 = new Ray(bulletSpawn.position, bulletSpawn.forward);
+        Ray ray4 = new Ray(bulletSpawn.position + (bulletSpawn.right * offsetStart) + (bulletSpawn.up * offsetStart), bulletSpawn.forward + (bulletSpawn.right * rayDetectorMeeleSpace) + (bulletSpawn.up * rayDetectorMeeleSpace));
+        Ray ray5 = new Ray(bulletSpawn.position - (bulletSpawn.right * offsetStart) + (bulletSpawn.up * offsetStart), bulletSpawn.forward - (bulletSpawn.right * rayDetectorMeeleSpace) + (bulletSpawn.up * rayDetectorMeeleSpace));
+        Ray ray6 = new Ray(bulletSpawn.position + (bulletSpawn.up * offsetStart), bulletSpawn.forward + (bulletSpawn.up * rayDetectorMeeleSpace));
+        Ray ray7 = new Ray(bulletSpawn.position + (bulletSpawn.right * offsetStart) - (bulletSpawn.up * offsetStart), bulletSpawn.forward + (bulletSpawn.right * rayDetectorMeeleSpace) - (bulletSpawn.up * rayDetectorMeeleSpace));
+        Ray ray8 = new Ray(bulletSpawn.position - (bulletSpawn.right * offsetStart) - (bulletSpawn.up * offsetStart), bulletSpawn.forward - (bulletSpawn.right * rayDetectorMeeleSpace) - (bulletSpawn.up * rayDetectorMeeleSpace));
+        Ray ray9 = new Ray(bulletSpawn.position - (bulletSpawn.up * offsetStart), bulletSpawn.forward - (bulletSpawn.up * rayDetectorMeeleSpace));
 
+        // Draw debug rays to visualize the spread
+        Debug.DrawRay(ray1.origin, ray1.direction, Color.cyan);
+        Debug.DrawRay(ray2.origin, ray2.direction, Color.cyan);
+        Debug.DrawRay(ray3.origin, ray3.direction, Color.cyan);
+        Debug.DrawRay(ray4.origin, ray4.direction, Color.red);
+        Debug.DrawRay(ray5.origin, ray5.direction, Color.red);
+        Debug.DrawRay(ray6.origin, ray6.direction, Color.red);
+        Debug.DrawRay(ray7.origin, ray7.direction, Color.yellow);
+        Debug.DrawRay(ray8.origin, ray8.direction, Color.yellow);
+        Debug.DrawRay(ray9.origin, ray9.direction, Color.yellow);
 
+        // Check if the current gun is performing a melee attack and, if so, start the melee attack coroutine.
+        if (gunInv && gunInv.currentGun)
+        {
+            GunScript gunScript = gunInv.currentGun.GetComponent<GunScript>();
+            if (gunScript != null)
+            {
+                if (!gunScript.meeleAttack)
+                {
+                    been_to_meele_anim = false;
+                }
+                if (gunScript.meeleAttack && !been_to_meele_anim)
+                {
+                    been_to_meele_anim = true;
+                    StartCoroutine(MeeleAttackWeaponHit());
+                }
+            }
+        }
+    }
 
+    /// <summary>
+    /// Coroutine that performs a melee attack by checking multiple raycasts and applying effects if a hit is detected.
+    /// </summary>
+    IEnumerator MeeleAttackWeaponHit()
+    {
+        if (Physics.Raycast(bulletSpawn.position + (bulletSpawn.right * offsetStart), bulletSpawn.forward + (bulletSpawn.right * rayDetectorMeeleSpace), out RaycastHit hitInfo, 2f, ~ignoreLayer) ||
+            Physics.Raycast(bulletSpawn.position - (bulletSpawn.right * offsetStart), bulletSpawn.forward - (bulletSpawn.right * rayDetectorMeeleSpace), out hitInfo, 2f, ~ignoreLayer) ||
+            Physics.Raycast(bulletSpawn.position, bulletSpawn.forward, out hitInfo, 2f, ~ignoreLayer) ||
+            Physics.Raycast(bulletSpawn.position + (bulletSpawn.right * offsetStart) + (bulletSpawn.up * offsetStart), bulletSpawn.forward + (bulletSpawn.right * rayDetectorMeeleSpace) + (bulletSpawn.up * rayDetectorMeeleSpace), out hitInfo, 2f, ~ignoreLayer) ||
+            Physics.Raycast(bulletSpawn.position - (bulletSpawn.right * offsetStart) + (bulletSpawn.up * offsetStart), bulletSpawn.forward - (bulletSpawn.right * rayDetectorMeeleSpace) + (bulletSpawn.up * rayDetectorMeeleSpace), out hitInfo, 2f, ~ignoreLayer) ||
+            Physics.Raycast(bulletSpawn.position + (bulletSpawn.up * offsetStart), bulletSpawn.forward + (bulletSpawn.up * rayDetectorMeeleSpace), out hitInfo, 2f, ~ignoreLayer) ||
+            Physics.Raycast(bulletSpawn.position + (bulletSpawn.right * offsetStart) - (bulletSpawn.up * offsetStart), bulletSpawn.forward + (bulletSpawn.right * rayDetectorMeeleSpace) - (bulletSpawn.up * rayDetectorMeeleSpace), out hitInfo, 2f, ~ignoreLayer) ||
+            Physics.Raycast(bulletSpawn.position - (bulletSpawn.right * offsetStart) - (bulletSpawn.up * offsetStart), bulletSpawn.forward - (bulletSpawn.right * rayDetectorMeeleSpace) - (bulletSpawn.up * rayDetectorMeeleSpace), out hitInfo, 2f, ~ignoreLayer) ||
+            Physics.Raycast(bulletSpawn.position - (bulletSpawn.up * offsetStart), bulletSpawn.forward - (bulletSpawn.up * rayDetectorMeeleSpace), out hitInfo, 2f, ~ignoreLayer))
+        {
+            if (hitInfo.transform.CompareTag("Dummie"))
+            {
+                Transform _other = hitInfo.transform.root;
+                if (_other.CompareTag("Dummie"))
+                {
+                    Debug.Log("Hit a dummie");
+                }
+                InstantiateBlood(hitInfo, false);
+            }
+        }
+        yield return new WaitForEndOfFrame();
+    }
 
-		if (meleeAttack_cooldown > -5) {
-			meleeAttack_cooldown -= 1 * Time.deltaTime;
-		}
+    /// <summary>
+    /// Instantiates a blood effect at the point of impact if the current weapon is a gun.
+    /// </summary>
+    /// <param name="_hitPos">The raycast hit information.</param>
+    /// <param name="swordHitWithGunOrNot">Flag for differentiating melee types.</param>
+    void InstantiateBlood(RaycastHit _hitPos, bool swordHitWithGunOrNot)
+    {
+        if (currentWeapo == "gun")
+        {
+            GunScript.HitMarkerSound();
+            if (_hitSound)
+                _hitSound.Play();
+            else
+                Debug.Log("Missing hit sound");
 
-
-		if (GetComponent<GunInventory> ().currentGun) {
-			if (GetComponent<GunInventory> ().currentGun.GetComponent<GunScript> ()) 
-				currentWeapo = "gun";
-		}
-
-		//middle row
-		ray1 = new Ray (bulletSpawn.position + (bulletSpawn.right*offsetStart), bulletSpawn.forward + (bulletSpawn.right * rayDetectorMeeleSpace));
-		ray2 = new Ray (bulletSpawn.position - (bulletSpawn.right*offsetStart), bulletSpawn.forward - (bulletSpawn.right * rayDetectorMeeleSpace));
-		ray3 = new Ray (bulletSpawn.position, bulletSpawn.forward);
-		//upper row
-		ray4 = new Ray (bulletSpawn.position + (bulletSpawn.right*offsetStart) + (bulletSpawn.up*offsetStart), bulletSpawn.forward + (bulletSpawn.right * rayDetectorMeeleSpace) + (bulletSpawn.up * rayDetectorMeeleSpace));
-		ray5 = new Ray (bulletSpawn.position - (bulletSpawn.right*offsetStart) + (bulletSpawn.up*offsetStart), bulletSpawn.forward - (bulletSpawn.right * rayDetectorMeeleSpace) + (bulletSpawn.up * rayDetectorMeeleSpace));
-		ray6 = new Ray (bulletSpawn.position + (bulletSpawn.up*offsetStart), bulletSpawn.forward + (bulletSpawn.up * rayDetectorMeeleSpace));
-		//bottom row
-		ray7 = new Ray (bulletSpawn.position + (bulletSpawn.right*offsetStart) - (bulletSpawn.up*offsetStart), bulletSpawn.forward + (bulletSpawn.right * rayDetectorMeeleSpace) - (bulletSpawn.up * rayDetectorMeeleSpace));
-		ray8 = new Ray (bulletSpawn.position - (bulletSpawn.right*offsetStart) - (bulletSpawn.up*offsetStart), bulletSpawn.forward - (bulletSpawn.right * rayDetectorMeeleSpace) - (bulletSpawn.up * rayDetectorMeeleSpace));
-		ray9 = new Ray (bulletSpawn.position -(bulletSpawn.up*offsetStart), bulletSpawn.forward - (bulletSpawn.up * rayDetectorMeeleSpace));
-
-		Debug.DrawRay (ray1.origin, ray1.direction, Color.cyan);
-		Debug.DrawRay (ray2.origin, ray2.direction, Color.cyan);
-		Debug.DrawRay (ray3.origin, ray3.direction, Color.cyan);
-		Debug.DrawRay (ray4.origin, ray4.direction, Color.red);
-		Debug.DrawRay (ray5.origin, ray5.direction, Color.red);
-		Debug.DrawRay (ray6.origin, ray6.direction, Color.red);
-		Debug.DrawRay (ray7.origin, ray7.direction, Color.yellow);
-		Debug.DrawRay (ray8.origin, ray8.direction, Color.yellow);
-		Debug.DrawRay (ray9.origin, ray9.direction, Color.yellow);
-
-		if (GetComponent<GunInventory> ().currentGun) {
-			if (GetComponent<GunInventory> ().currentGun.GetComponent<GunScript> ().meeleAttack == false) {
-				been_to_meele_anim = false;
-			}
-			if (GetComponent<GunInventory> ().currentGun.GetComponent<GunScript> ().meeleAttack == true && been_to_meele_anim == false) {
-				been_to_meele_anim = true;
-				//	if (isRunning == false) {
-				StartCoroutine ("MeeleAttackWeaponHit");
-				//	}
-			}
-		}
-
-	}
-
-	/*
-	 *Method that is called if the waepon hit animation has been triggered the first time via Q input
-	 *and if is, it will search for target and make damage
-	 */
-	IEnumerator MeeleAttackWeaponHit(){
-		if (Physics.Raycast (ray1, out hitInfo, 2f, ~ignoreLayer) || Physics.Raycast (ray2, out hitInfo, 2f, ~ignoreLayer) || Physics.Raycast (ray3, out hitInfo, 2f, ~ignoreLayer)
-			|| Physics.Raycast (ray4, out hitInfo, 2f, ~ignoreLayer) || Physics.Raycast (ray5, out hitInfo, 2f, ~ignoreLayer) || Physics.Raycast (ray6, out hitInfo, 2f, ~ignoreLayer)
-			|| Physics.Raycast (ray7, out hitInfo, 2f, ~ignoreLayer) || Physics.Raycast (ray8, out hitInfo, 2f, ~ignoreLayer) || Physics.Raycast (ray9, out hitInfo, 2f, ~ignoreLayer)) {
-			//Debug.DrawRay (bulletSpawn.position, bulletSpawn.forward + (bulletSpawn.right*0.2f), Color.green, 0.0f);
-			if (hitInfo.transform.tag=="Dummie") {
-				Transform _other = hitInfo.transform.root.transform;
-				if (_other.transform.tag == "Dummie") {
-					print ("hit a dummie");
-				}
-				InstantiateBlood(hitInfo,false);
-			}
-		}
-		yield return new WaitForEndOfFrame ();
-	}
-
-	[Header("BloodForMelleAttaacks")]
-	RaycastHit hit;//stores info of hit;
-	[Tooltip("Put your particle blood effect here.")]
-	public GameObject bloodEffect;//blod effect prefab;
-	/*
-	* Upon hitting enemy it calls this method, gives it raycast hit info 
-	* and at that position it creates our blood prefab.
-	*/
-	void InstantiateBlood (RaycastHit _hitPos,bool swordHitWithGunOrNot) {		
-
-		if (currentWeapo == "gun") {
-			GunScript.HitMarkerSound ();
-
-			if (_hitSound)
-				_hitSound.Play ();
-			else
-				print ("Missing hit sound");
-			
-			if (!swordHitWithGunOrNot) {
-				if (bloodEffect)
-					Instantiate (bloodEffect, _hitPos.point, Quaternion.identity);
-				else
-					print ("Missing blood effect prefab in the inspector.");
-			}
-		} 
-	}
-	private GameObject myBloodEffect;
-
-
-	[Header("Player SOUNDS")]
-	[Tooltip("Jump sound when player jumps.")]
-	public AudioSource _jumpSound;
-	[Tooltip("Sound while player makes when successfully reloads weapon.")]
-	public AudioSource _freakingZombiesSound;
-	[Tooltip("Sound Bullet makes when hits target.")]
-	public AudioSource _hitSound;
-	[Tooltip("Walk sound player makes.")]
-	public AudioSource _walkSound;
-	[Tooltip("Run Sound player makes.")]
-	public AudioSource _runSound;
+            if (!swordHitWithGunOrNot)
+            {
+                if (bloodEffect)
+                    Instantiate(bloodEffect, _hitPos.point, Quaternion.identity);
+                else
+                    Debug.Log("Missing blood effect prefab in the inspector.");
+            }
+        }
+    }
 }
-

@@ -1,599 +1,543 @@
 ﻿using UnityEngine;
 using System.Collections;
-//using UnityStandardAssets.ImageEffects;
 
-public enum GunStyles{
-	nonautomatic,automatic
-}
-public class GunScript : MonoBehaviour {
-	[Tooltip("Selects type of waepon to shoot rapidly or one bullet per click.")]
-	public GunStyles currentStyle;
-	[HideInInspector]
-	public MouseLookScript mls;
-
-	[Header("Player movement properties")]
-	[Tooltip("Speed is determined via gun because not every gun has same properties or weights so you MUST set up your speeds here")]
-	public int walkingSpeed = 3;
-	[Tooltip("Speed is determined via gun because not every gun has same properties or weights so you MUST set up your speeds here")]
-	public int runningSpeed = 5;
-
-
-	[Header("Bullet properties")]
-	[Tooltip("Preset value to tell with how many bullets will our waepon spawn aside.")]
-	public float bulletsIHave = 20;
-	[Tooltip("Preset value to tell with how much bullets will our waepon spawn inside rifle.")]
-	public float bulletsInTheGun = 5;
-	[Tooltip("Preset value to tell how much bullets can one magazine carry.")]
-	public float amountOfBulletsPerLoad = 5;
-
-	private Transform player;
-	private Camera cameraComponent;
-	private Transform gunPlaceHolder;
-
-	private PlayerMovementScript pmS;
-
-	/*
-	 * Collection the variables upon awake that we need.
-	 */
-	void Awake(){
-
-
-		mls = GameObject.FindGameObjectWithTag("Player").GetComponent<MouseLookScript>();
-		player = mls.transform;
-		mainCamera = mls.myCamera;
-		secondCamera = GameObject.FindGameObjectWithTag("SecondCamera").GetComponent<Camera>();
-		cameraComponent = mainCamera.GetComponent<Camera>();
-		pmS = player.GetComponent<PlayerMovementScript>();
-
-		bulletSpawnPlace = GameObject.FindGameObjectWithTag("BulletSpawn");
-		hitMarker = transform.Find ("hitMarkerSound").GetComponent<AudioSource> ();
-
-		startLook = mouseSensitvity_notAiming;
-		startAim = mouseSensitvity_aiming;
-		startRun = mouseSensitvity_running;
-
-		rotationLastY = mls.currentYRotation;
-		rotationLastX= mls.currentCameraXRotation;
-
-	}
-
-
-	[HideInInspector]
-	public Vector3 currentGunPosition;
-	[Header("Gun Positioning")]
-	[Tooltip("Vector 3 position from player SETUP for NON AIMING values")]
-	public Vector3 restPlacePosition;
-	[Tooltip("Vector 3 position from player SETUP for AIMING values")]
-	public Vector3 aimPlacePosition;
-	[Tooltip("Time that takes for gun to get into aiming stance.")]
-	public float gunAimTime = 0.1f;
-
-	[HideInInspector]
-	public bool reloading;
-
-	private Vector3 gunPosVelocity;
-	private float cameraZoomVelocity;
-	private float secondCameraZoomVelocity;
-
-	private Vector2 gunFollowTimeVelocity;
-
-	/*
-	Update loop calling for methods that are descriped below where they are initiated.
-	*/
-	void Update(){
-
-		Animations();
-
-		GiveCameraScriptMySensitvity();
-
-		PositionGun();
-
-		Shooting();
-		MeeleAttack();
-		LockCameraWhileMelee ();
-
-		Sprint(); //iff we have the gun you sprint from here, if we are gunless then its called from movement script
-
-		CrossHairExpansionWhenWalking();
-
-
-	}
-
-	/*
-	*Update loop calling for methods that are descriped below where they are initiated.
-	*+
-	*Calculation of weapon position when aiming or not aiming.
-	*/
-	void FixedUpdate(){
-		RotationGun ();
-
-		MeeleAnimationsStates ();
-
-		/*
-		 * Changing some values if we are aiming, like sensitity, zoom racion and position of the waepon.
-		 */
-		//if aiming
-		if(Input.GetAxis("Fire2") != 0 && !reloading && !meeleAttack){
-			gunPrecision = gunPrecision_aiming;
-			recoilAmount_x = recoilAmount_x_;
-			recoilAmount_y = recoilAmount_y_;
-			recoilAmount_z = recoilAmount_z_;
-			currentGunPosition = Vector3.SmoothDamp(currentGunPosition, aimPlacePosition, ref gunPosVelocity, gunAimTime);
-			cameraComponent.fieldOfView = Mathf.SmoothDamp(cameraComponent.fieldOfView, cameraZoomRatio_aiming, ref cameraZoomVelocity, gunAimTime);
-			secondCamera.fieldOfView = Mathf.SmoothDamp(secondCamera.fieldOfView, secondCameraZoomRatio_aiming, ref secondCameraZoomVelocity, gunAimTime);
-		}
-		//if not aiming
-		else{
-			gunPrecision = gunPrecision_notAiming;
-			recoilAmount_x = recoilAmount_x_non;
-			recoilAmount_y = recoilAmount_y_non;
-			recoilAmount_z = recoilAmount_z_non;
-			currentGunPosition = Vector3.SmoothDamp(currentGunPosition, restPlacePosition, ref gunPosVelocity, gunAimTime);
-			cameraComponent.fieldOfView = Mathf.SmoothDamp(cameraComponent.fieldOfView, cameraZoomRatio_notAiming, ref cameraZoomVelocity, gunAimTime);
-			secondCamera.fieldOfView = Mathf.SmoothDamp(secondCamera.fieldOfView, secondCameraZoomRatio_notAiming, ref secondCameraZoomVelocity, gunAimTime);
-		}
-
-	}
-
-	[Header("Sensitvity of the gun")]
-	[Tooltip("Sensitvity of this gun while not aiming.")]
-	public float mouseSensitvity_notAiming = 10;
-	//[HideInInspector]
-	[Tooltip("Sensitvity of this gun while aiming.")]
-	public float mouseSensitvity_aiming = 5;
-	//[HideInInspector]
-	[Tooltip("Sensitvity of this gun while running.")]
-	public float mouseSensitvity_running = 4;
-	/*
-	 * Used to give our main camera different sensivity options for each gun.
-	 */
-	void GiveCameraScriptMySensitvity(){
-		mls.mouseSensitvity_notAiming = mouseSensitvity_notAiming;
-		mls.mouseSensitvity_aiming = mouseSensitvity_aiming;
-	}
-
-	/*
-	 * Used to expand position of the crosshair or make it dissapear when running
-	 */
-	void CrossHairExpansionWhenWalking(){
-
-		if(player.GetComponent<Rigidbody>().linearVelocity.magnitude > 1 && Input.GetAxis("Fire1") == 0){//ifnot shooting
-
-			expandValues_crosshair += new Vector2(20, 40) * Time.deltaTime;
-			if(player.GetComponent<PlayerMovementScript>().maxSpeed < runningSpeed){ //not running
-				expandValues_crosshair = new Vector2(Mathf.Clamp(expandValues_crosshair.x, 0, 10), Mathf.Clamp(expandValues_crosshair.y,0,20));
-				fadeout_value = Mathf.Lerp(fadeout_value, 1, Time.deltaTime * 2);
-			}
-			else{//running
-				fadeout_value = Mathf.Lerp(fadeout_value, 0, Time.deltaTime * 10);
-				expandValues_crosshair = new Vector2(Mathf.Clamp(expandValues_crosshair.x, 0, 20), Mathf.Clamp(expandValues_crosshair.y,0,40));
-			}
-		}
-		else{//if shooting
-			expandValues_crosshair = Vector2.Lerp(expandValues_crosshair, Vector2.zero, Time.deltaTime * 5);
-			expandValues_crosshair = new Vector2(Mathf.Clamp(expandValues_crosshair.x, 0, 10), Mathf.Clamp(expandValues_crosshair.y,0,20));
-			fadeout_value = Mathf.Lerp(fadeout_value, 1, Time.deltaTime * 2);
-
-		}
-
-	}
-
-	/* 
-	 * Changes the max speed that player is allowed to go.
-	 * Also max speed is connected to the animator which will trigger the run animation.
-	 */
-	void Sprint(){// Running();  so i can find it with CTRL + F
-		if (Input.GetAxis ("Vertical") > 0 && Input.GetAxisRaw ("Fire2") == 0 && meeleAttack == false && Input.GetAxisRaw ("Fire1") == 0) {
-			if (Input.GetKeyDown (KeyCode.LeftShift)) {
-				if (pmS.maxSpeed == walkingSpeed) {
-					pmS.maxSpeed = runningSpeed;//sets player movement peed to max
-
-				} else {
-					pmS.maxSpeed = walkingSpeed;
-				}
-			}
-		} else {
-			pmS.maxSpeed = walkingSpeed;
-		}
-
-	}
-
-	[HideInInspector]
-	public bool meeleAttack;
-	[HideInInspector]
-	public bool aiming;
-	/*
-	 * Checking if meeleAttack is already running.
-	 * If we are not reloading we can trigger the MeeleAttack animation from the IENumerator.
-	 */
-	void MeeleAnimationsStates(){
-		if (handsAnimator) {
-			meeleAttack = handsAnimator.GetCurrentAnimatorStateInfo (0).IsName (meeleAnimationName);
-			aiming = handsAnimator.GetCurrentAnimatorStateInfo (0).IsName (aimingAnimationName);	
-		}
-	}
-	/*
-	* User inputs meele attack with Q in keyboard start the coroutine for animation and damage attack.
-	*/
-	void MeeleAttack(){	
-
-		if(Input.GetKeyDown(KeyCode.Q) && !meeleAttack){			
-			StartCoroutine("AnimationMeeleAttack");
-		}
-	}
-	/*
-	* Sets meele animation to play.
-	*/
-	IEnumerator AnimationMeeleAttack(){
-		handsAnimator.SetBool("meeleAttack",true);
-		//yield return new WaitForEndOfFrame();
-		yield return new WaitForSeconds(0.1f);
-		handsAnimator.SetBool("meeleAttack",false);
-	}
-
-	private float startLook, startAim, startRun;
-	/*
-	* Setting the mouse sensitvity lower when meele attack and waits till it ends.
-	*/
-	void LockCameraWhileMelee(){
-		if (meeleAttack) {
-			mouseSensitvity_notAiming = 2;
-			mouseSensitvity_aiming = 1.6f;
-			mouseSensitvity_running = 1;
-		} else {
-			mouseSensitvity_notAiming = startLook;
-			mouseSensitvity_aiming = startAim;
-			mouseSensitvity_running = startRun;
-		}
-	}
-
-
-	private Vector3 velV;
-	[HideInInspector]
-	public Transform mainCamera;
-	private Camera secondCamera;
-	/*
-	 * Calculatin the weapon position accordingly to the player position and rotation.
-	 * After calculation the recoil amount are decreased to 0.
-	 */
-	void PositionGun(){
-		transform.position = Vector3.SmoothDamp(transform.position,
-			mainCamera.transform.position  - 
-			(mainCamera.transform.right * (currentGunPosition.x + currentRecoilXPos)) + 
-			(mainCamera.transform.up * (currentGunPosition.y+ currentRecoilYPos)) + 
-			(mainCamera.transform.forward * (currentGunPosition.z + currentRecoilZPos)),ref velV, 0);
-
-
-
-		pmS.cameraPosition = new Vector3(currentRecoilXPos,currentRecoilYPos, 0);
-
-		currentRecoilZPos = Mathf.SmoothDamp(currentRecoilZPos, 0, ref velocity_z_recoil, recoilOverTime_z);
-		currentRecoilXPos = Mathf.SmoothDamp(currentRecoilXPos, 0, ref velocity_x_recoil, recoilOverTime_x);
-		currentRecoilYPos = Mathf.SmoothDamp(currentRecoilYPos, 0, ref velocity_y_recoil, recoilOverTime_y);
-
-	}
-
-
-	[Header("Rotation")]
-	private Vector2 velocityGunRotate;
-	private float gunWeightX,gunWeightY;
-	[Tooltip("The time waepon will lag behind the camera view best set to '0'.")]
-	public float rotationLagTime = 0f;
-	private float rotationLastY;
-	private float rotationDeltaY;
-	private float angularVelocityY;
-	private float rotationLastX;
-	private float rotationDeltaX;
-	private float angularVelocityX;
-	[Tooltip("Value of forward rotation multiplier.")]
-	public Vector2 forwardRotationAmount = Vector2.one;
-	/*
-	* Rotatin the weapon according to mouse look rotation.
-	* Calculating the forawrd rotation like in Call Of Duty weapon weight
-	*/
-	void RotationGun(){
-
-		rotationDeltaY = mls.currentYRotation - rotationLastY;
-		rotationDeltaX = mls.currentCameraXRotation - rotationLastX;
-
-		rotationLastY= mls.currentYRotation;
-		rotationLastX= mls.currentCameraXRotation;
-
-		angularVelocityY = Mathf.Lerp (angularVelocityY, rotationDeltaY, Time.deltaTime * 5);
-		angularVelocityX = Mathf.Lerp (angularVelocityX, rotationDeltaX, Time.deltaTime * 5);
-
-		gunWeightX = Mathf.SmoothDamp (gunWeightX, mls.currentCameraXRotation, ref velocityGunRotate.x, rotationLagTime);
-		gunWeightY = Mathf.SmoothDamp (gunWeightY, mls.currentYRotation, ref velocityGunRotate.y, rotationLagTime);
-
-		transform.rotation = Quaternion.Euler (gunWeightX + (angularVelocityX*forwardRotationAmount.x), gunWeightY + (angularVelocityY*forwardRotationAmount.y), 0);
-	}
-
-	private float currentRecoilZPos;
-	private float currentRecoilXPos;
-	private float currentRecoilYPos;
-	/*
-	 * Called from ShootMethod();, upon shooting the recoil amount will increase.
-	 */
-	public void RecoilMath(){
-		currentRecoilZPos -= recoilAmount_z;
-		currentRecoilXPos -= (Random.value - 0.5f) * recoilAmount_x;
-		currentRecoilYPos -= (Random.value - 0.5f) * recoilAmount_y;
-		mls.wantedCameraXRotation -= Mathf.Abs(currentRecoilYPos * gunPrecision);
-		mls.wantedYRotation -= (currentRecoilXPos * gunPrecision);		 
-
-		expandValues_crosshair += new Vector2(6,12);
-
-	}
-
-	[Header("Shooting setup - MUSTDO")]
-	[HideInInspector] public GameObject bulletSpawnPlace;
-	[Tooltip("Bullet prefab that this waepon will shoot.")]
-	public GameObject bullet;
-	[Tooltip("Rounds per second if weapon is set to automatic rafal.")]
-	public float roundsPerSecond;
-	private float waitTillNextFire;
-	/*
-	 * Checking if the gun is automatic or nonautomatic and accordingly runs the ShootMethod();.
-	 */
-	void Shooting(){
-
-		if (!meeleAttack) {
-			if (currentStyle == GunStyles.nonautomatic) {
-				if (Input.GetButtonDown ("Fire1")) {
-					ShootMethod ();
-				}
-			}
-			if (currentStyle == GunStyles.automatic) {
-				if (Input.GetButton ("Fire1")) {
-					ShootMethod ();
-				}
-			}
-		}
-		waitTillNextFire -= roundsPerSecond * Time.deltaTime;
-	}
-
-
-	[HideInInspector]	public float recoilAmount_z = 0.5f;
-	[HideInInspector]	public float recoilAmount_x = 0.5f;
-	[HideInInspector]	public float recoilAmount_y = 0.5f;
-	[Header("Recoil Not Aiming")]
-	[Tooltip("Recoil amount on that AXIS while NOT aiming")]
-	public float recoilAmount_z_non = 0.5f;
-	[Tooltip("Recoil amount on that AXIS while NOT aiming")]
-	public float recoilAmount_x_non = 0.5f;
-	[Tooltip("Recoil amount on that AXIS while NOT aiming")]
-	public float recoilAmount_y_non = 0.5f;
-	[Header("Recoil Aiming")]
-	[Tooltip("Recoil amount on that AXIS while aiming")]
-	public float recoilAmount_z_ = 0.5f;
-	[Tooltip("Recoil amount on that AXIS while aiming")]
-	public float recoilAmount_x_ = 0.5f;
-	[Tooltip("Recoil amount on that AXIS while aiming")]
-	public float recoilAmount_y_ = 0.5f;
-	[HideInInspector]public float velocity_z_recoil,velocity_x_recoil,velocity_y_recoil;
-	[Header("")]
-	[Tooltip("The time that takes weapon to get back on its original axis after recoil.(The smaller number the faster it gets back to original position)")]
-	public float recoilOverTime_z = 0.5f;
-	[Tooltip("The time that takes weapon to get back on its original axis after recoil.(The smaller number the faster it gets back to original position)")]
-	public float recoilOverTime_x = 0.5f;
-	[Tooltip("The time that takes weapon to get back on its original axis after recoil.(The smaller number the faster it gets back to original position)")]
-	public float recoilOverTime_y = 0.5f;
-
-	[Header("Gun Precision")]
-	[Tooltip("Gun rate precision when player is not aiming. THis is calculated with recoil.")]
-	public float gunPrecision_notAiming = 200.0f;
-	[Tooltip("Gun rate precision when player is aiming. THis is calculated with recoil.")]
-	public float gunPrecision_aiming = 100.0f;
-	[Tooltip("FOV of first camera when NOT aiming(ONLY SECOND CAMERA RENDERS WEAPONS")]
-	public float cameraZoomRatio_notAiming = 60;
-	[Tooltip("FOV of first camera when aiming(ONLY SECOND CAMERA RENDERS WEAPONS")]
-	public float cameraZoomRatio_aiming = 40;
-	[Tooltip("FOV of second camera when NOT aiming(ONLY SECOND CAMERA RENDERS WEAPONS")]
-	public float secondCameraZoomRatio_notAiming = 60;
-	[Tooltip("FOV of second camera when aiming(ONLY SECOND CAMERA RENDERS WEAPONS")]
-	public float secondCameraZoomRatio_aiming = 40;
-	[HideInInspector]
-	public float gunPrecision;
-
-	[Tooltip("Audios for shootingSound, and reloading.")]
-	public AudioSource shoot_sound_source, reloadSound_source;
-	[Tooltip("Sound that plays after successful attack bullet hit.")]
-	public static AudioSource hitMarker;
-
-	/*
-	* Sounds that is called upon hitting the target.
-	*/
-	public static void HitMarkerSound(){
-		hitMarker.Play();
-	}
-
-	[Tooltip("Array of muzzel flashes, randmly one will appear after each bullet.")]
-	public GameObject[] muzzelFlash;
-	[Tooltip("Place on the gun where muzzel flash will appear.")]
-	public GameObject muzzelSpawn;
-	private GameObject holdFlash;
-	private GameObject holdSmoke;
-	/*
-	 * Called from Shooting();
-	 * Creates bullets and muzzle flashes and calls for Recoil.
-	 */
-	private void ShootMethod(){
-		if(waitTillNextFire <= 0 && !reloading && pmS.maxSpeed < 5){
-
-			if(bulletsInTheGun > 0){
-
-				int randomNumberForMuzzelFlash = Random.Range(0,5);
-				if (bullet)
-					Instantiate (bullet, bulletSpawnPlace.transform.position, bulletSpawnPlace.transform.rotation);
-				else
-					print ("Missing the bullet prefab");
-				holdFlash = Instantiate(muzzelFlash[randomNumberForMuzzelFlash], muzzelSpawn.transform.position /*- muzzelPosition*/, muzzelSpawn.transform.rotation * Quaternion.Euler(0,0,90) ) as GameObject;
-				holdFlash.transform.parent = muzzelSpawn.transform;
-				if (shoot_sound_source)
-					shoot_sound_source.Play ();
-				else
-					print ("Missing 'Shoot Sound Source'.");
-
-				RecoilMath();
-
-				waitTillNextFire = 1;
-				bulletsInTheGun -= 1;
-			}
-				
-			else{
-				//if(!aiming)
-				StartCoroutine("Reload_Animation");
-				//if(emptyClip_sound_source)
-				//	emptyClip_sound_source.Play();
-			}
-
-		}
-
-	}
-
-
-
-	/*
-	* Reloading, setting the reloading to animator,
-	* Waiting for 2 seconds and then seeting the reloaded clip.
-	*/
-	[Header("reload time after anima")]
-	[Tooltip("Time that passes after reloading. Depends on your reload animation length, because reloading can be interrupted via meele attack or running. So any action before this finishes will interrupt reloading.")]
-	public float reloadChangeBulletsTime;
-	IEnumerator Reload_Animation(){
-		if(bulletsIHave > 0 && bulletsInTheGun < amountOfBulletsPerLoad && !reloading/* && !aiming*/){
-
-			if (reloadSound_source.isPlaying == false && reloadSound_source != null) {
-				if (reloadSound_source)
-					reloadSound_source.Play ();
-				else
-					print ("'Reload Sound Source' missing.");
-			}
-		
-
-			handsAnimator.SetBool("reloading",true);
-			yield return new WaitForSeconds(0.5f);
-			handsAnimator.SetBool("reloading",false);
-
-
-
-			yield return new WaitForSeconds (reloadChangeBulletsTime - 0.5f);//minus ovo vrijeme cekanja na yield
-			if (meeleAttack == false && pmS.maxSpeed != runningSpeed) {
-				//print ("tu sam");
-				if (player.GetComponent<PlayerMovementScript> ()._freakingZombiesSound)
-					player.GetComponent<PlayerMovementScript> ()._freakingZombiesSound.Play ();
-				else
-					print ("Missing Freaking Zombies Sound");
-				
-				if (bulletsIHave - amountOfBulletsPerLoad >= 0) {
-					bulletsIHave -= amountOfBulletsPerLoad - bulletsInTheGun;
-					bulletsInTheGun = amountOfBulletsPerLoad;
-				} else if (bulletsIHave - amountOfBulletsPerLoad < 0) {
-					float valueForBoth = amountOfBulletsPerLoad - bulletsInTheGun;
-					if (bulletsIHave - valueForBoth < 0) {
-						bulletsInTheGun += bulletsIHave;
-						bulletsIHave = 0;
-					} else {
-						bulletsIHave -= valueForBoth;
-						bulletsInTheGun += valueForBoth;
-					}
-				}
-			} else {
-				reloadSound_source.Stop ();
-
-				print ("Reload interrupted via meele attack");
-			}
-
-		}
-	}
-
-	/*
-	 * Setting the number of bullets to the hud UI gameobject if there is one.
-	 * And drawing CrossHair from here.
-	 */
-	[Tooltip("HUD bullets to display bullet count on screen. Will be find under name 'HUD_bullets' in scene.")]
-	public TextMesh HUD_bullets;
-	void OnGUI(){
-		if(!HUD_bullets){
-			try{
-				HUD_bullets = GameObject.Find("HUD_bullets").GetComponent<TextMesh>();
-			}
-			catch(System.Exception ex){
-				print("Couldnt find the HUD_Bullets ->" + ex.StackTrace.ToString());
-			}
-		}
-		if(mls && HUD_bullets)
-			HUD_bullets.text = bulletsIHave.ToString() + " - " + bulletsInTheGun.ToString();
-
-		DrawCrosshair();
-	}
-
-	[Header("Crosshair properties")]
-	public Texture horizontal_crosshair, vertical_crosshair;
-	public Vector2 top_pos_crosshair, bottom_pos_crosshair, left_pos_crosshair, right_pos_crosshair;
-	public Vector2 size_crosshair_vertical = new Vector2(1,1), size_crosshair_horizontal = new Vector2(1,1);
-	[HideInInspector]
-	public Vector2 expandValues_crosshair;
-	private float fadeout_value = 1;
-	/*
-	 * Drawing the crossHair.
-	 */
-	void DrawCrosshair(){
-		GUI.color = new Color(GUI.color.r, GUI.color.g, GUI.color.b, fadeout_value);
-		if(Input.GetAxis("Fire2") == 0){//if not aiming draw
-			GUI.DrawTexture(new Rect(vec2(left_pos_crosshair).x + position_x(-expandValues_crosshair.x) + Screen.width/2,Screen.height/2 + vec2(left_pos_crosshair).y, vec2(size_crosshair_horizontal).x, vec2(size_crosshair_horizontal).y), vertical_crosshair);//left
-			GUI.DrawTexture(new Rect(vec2(right_pos_crosshair).x + position_x(expandValues_crosshair.x) + Screen.width/2,Screen.height/2 + vec2(right_pos_crosshair).y, vec2(size_crosshair_horizontal).x, vec2(size_crosshair_horizontal).y), vertical_crosshair);//right
-
-			GUI.DrawTexture(new Rect(vec2(top_pos_crosshair).x + Screen.width/2,Screen.height/2 + vec2(top_pos_crosshair).y + position_y(-expandValues_crosshair.y), vec2(size_crosshair_vertical).x, vec2(size_crosshair_vertical).y ), horizontal_crosshair);//top
-			GUI.DrawTexture(new Rect(vec2(bottom_pos_crosshair).x + Screen.width/2,Screen.height/2 +vec2(bottom_pos_crosshair).y + position_y(expandValues_crosshair.y), vec2(size_crosshair_vertical).x, vec2(size_crosshair_vertical).y), horizontal_crosshair);//bottom
-		}
-
-	}
-
-	//#####		RETURN THE SIZE AND POSITION for GUI images ##################
-	private float position_x(float var){
-		return Screen.width * var / 100;
-	}
-	private float position_y(float var)
-	{
-		return Screen.height * var / 100;
-	}
-	private float size_x(float var)
-	{
-		return Screen.width * var / 100;
-	}
-	private float size_y(float var)
-	{
-		return Screen.height * var / 100;
-	}
-	private Vector2 vec2(Vector2 _vec2){
-		return new Vector2(Screen.width * _vec2.x / 100, Screen.height * _vec2.y / 100);
-	}
-	//#
-
-	public Animator handsAnimator;
-	/*
-	* Fetching if any current animation is running.
-	* Setting the reload animation upon pressing R.
-	*/
-	void Animations(){
-
-		if(handsAnimator){
-
-			reloading = handsAnimator.GetCurrentAnimatorStateInfo(0).IsName(reloadAnimationName);
-
-			handsAnimator.SetFloat("walkSpeed",pmS.currentSpeed);
-			handsAnimator.SetBool("aiming", Input.GetButton("Fire2"));
-			handsAnimator.SetInteger("maxSpeed", pmS.maxSpeed);
-			if(Input.GetKeyDown(KeyCode.R) && pmS.maxSpeed < 5 && !reloading && !meeleAttack/* && !aiming*/){
-				StartCoroutine("Reload_Animation");
-			}
-		}
-
-	}
-
-	[Header("Animation names")]
-	public string reloadAnimationName = "Player_Reload";
-	public string aimingAnimationName = "Player_AImpose";
-	public string meeleAnimationName = "Character_Malee";
+public enum GunStyles { nonautomatic, automatic }
+
+public class GunScript : MonoBehaviour
+{
+    // Gun style setting: nonautomatic fires once per click, automatic fires continuously
+    [Tooltip("Selects type of weapon: nonautomatic fires one bullet per click, automatic fires repeatedly.")]
+    public GunStyles currentStyle;
+
+    // References (cached in Awake)
+    [HideInInspector]
+    public MouseLookScript mls;
+    private Transform player;
+    private Camera cameraComponent;
+    private PlayerMovementScript pmS;
+    [HideInInspector]
+    public Transform mainCamera;
+    private Camera secondCamera;
+    private TextMesh HUD_bullets;
+
+    // Player movement speeds that affect gun behavior
+    [Header("Player Movement Properties")]
+    [Tooltip("Walking speed (affects gun weight and movement)")]
+    public int walkingSpeed = 3;
+    [Tooltip("Running speed (affects gun weight and movement)")]
+    public int runningSpeed = 5;
+
+    // Ammo settings
+    [Header("Bullet Properties")]
+    [Tooltip("Total bullets available for the weapon.")]
+    public float bulletsIHave = 20;
+    [Tooltip("Bullets currently loaded in the gun.")]
+    public float bulletsInTheGun = 5;
+    [Tooltip("Maximum bullets per magazine.")]
+    public float amountOfBulletsPerLoad = 5;
+
+    // Gun positioning (resting and aiming positions)
+    [Header("Gun Positioning")]
+    [Tooltip("Gun position when not aiming.")]
+    public Vector3 restPlacePosition;
+    [Tooltip("Gun position when aiming.")]
+    public Vector3 aimPlacePosition;
+    [Tooltip("Time for gun to transition between positions.")]
+    public float gunAimTime = 0.1f;
+    [HideInInspector]
+    public Vector3 currentGunPosition;
+
+    // Internal state variables
+    [HideInInspector]
+    public bool reloading;
+    [HideInInspector]
+    public bool meeleAttack;
+    [HideInInspector]
+    public bool aiming;
+    private Vector3 gunPosVelocity;
+    private float cameraZoomVelocity;
+    private float secondCameraZoomVelocity;
+    private float waitTillNextFire = 0f;
+
+    // Sensitivity for camera adjustment
+    [Header("Gun Sensitivity")]
+    [Tooltip("Sensitivity when not aiming.")]
+    public float mouseSensitvity_notAiming = 10;
+    [Tooltip("Sensitivity when aiming.")]
+    public float mouseSensitvity_aiming = 5;
+    [Tooltip("Sensitivity when running.")]
+    public float mouseSensitvity_running = 4;
+    private float startLook, startAim, startRun;
+
+    // Crosshair drawing properties
+    [Header("Crosshair Properties")]
+    public Texture horizontal_crosshair, vertical_crosshair;
+    public Vector2 top_pos_crosshair, bottom_pos_crosshair, left_pos_crosshair, right_pos_crosshair;
+    public Vector2 size_crosshair_vertical = new Vector2(1, 1), size_crosshair_horizontal = new Vector2(1, 1);
+    [HideInInspector]
+    public Vector2 expandValues_crosshair;
+    private float fadeout_value = 1;
+
+    // Animator for gun and hands animations
+    public Animator handsAnimator;
+    [Header("Animation Names")]
+    public string reloadAnimationName = "Player_Reload";
+    public string aimingAnimationName = "Player_AImpose";
+    public string meeleAnimationName = "Character_Malee";
+
+    // Recoil and rotation parameters
+    [Header("Recoil and Rotation")]
+    public float recoilAmount_z_non = 0.5f;
+    public float recoilAmount_x_non = 0.5f;
+    public float recoilAmount_y_non = 0.5f;
+    public float recoilAmount_z_ = 0.5f;
+    public float recoilAmount_x_ = 0.5f;
+    public float recoilAmount_y_ = 0.5f;
+    [HideInInspector] public float recoilAmount_z, recoilAmount_x, recoilAmount_y;
+    public float recoilOverTime_z = 0.5f;
+    public float recoilOverTime_x = 0.5f;
+    public float recoilOverTime_y = 0.5f;
+    private float currentRecoilZPos, currentRecoilXPos, currentRecoilYPos;
+    private float velocity_x_recoil, velocity_y_recoil, velocity_z_recoil;
+
+    [Header("Gun Precision and FOV")]
+    [Tooltip("Gun precision (affects recoil impact) when not aiming.")]
+    public float gunPrecision_notAiming = 200.0f;
+    [Tooltip("Gun precision when aiming.")]
+    public float gunPrecision_aiming = 100.0f;
+    public float cameraZoomRatio_notAiming = 60;
+    public float cameraZoomRatio_aiming = 40;
+    public float secondCameraZoomRatio_notAiming = 60;
+    public float secondCameraZoomRatio_aiming = 40;
+    [HideInInspector]
+    public float gunPrecision;
+
+    // Audio sources and effects
+    [Header("Audio")]
+    [Tooltip("Sound played when shooting.")]
+    public AudioSource shoot_sound_source;
+    [Tooltip("Sound played during reload.")]
+    public AudioSource reloadSound_source;
+    [Tooltip("Sound played on bullet hit.")]
+    public static AudioSource hitMarker;
+
+    // Muzzle flash and bullet spawning
+    [Header("Muzzle and Bullet")]
+    [Tooltip("Bullet prefab to be fired.")]
+    public GameObject bullet;
+    [Tooltip("Bullet spawn point.")]
+    public GameObject bulletSpawnPlace;
+    [Tooltip("Array of muzzle flash prefabs; one will be chosen at random.")]
+    public GameObject[] muzzelFlash;
+    [Tooltip("Transform for muzzle flash spawn.")]
+    public GameObject muzzelSpawn;
+    private GameObject holdFlash;
+
+    // Rotation helper variables
+    private float rotationLastY, rotationLastX;
+    private float rotationDeltaY, rotationDeltaX;
+    private float angularVelocityY, angularVelocityX;
+    private Vector2 velocityGunRotate;
+    [Tooltip("Time for the gun to lag behind the camera.")]
+    public float rotationLagTime = 0f;
+    [Tooltip("Forward rotation multiplier.")]
+    public Vector2 forwardRotationAmount = Vector2.one;
+    private float gunWeightX, gunWeightY;
+
+    void Awake()
+    {
+        // Cache frequently used components
+        mls = GameObject.FindGameObjectWithTag("Player").GetComponent<MouseLookScript>();
+        player = mls.transform;
+        mainCamera = mls.myCamera;
+        secondCamera = GameObject.FindGameObjectWithTag("SecondCamera").GetComponent<Camera>();
+        cameraComponent = mainCamera.GetComponent<Camera>();
+        pmS = player.GetComponent<PlayerMovementScript>();
+
+        bulletSpawnPlace = GameObject.FindGameObjectWithTag("BulletSpawn");
+
+        // Attempt to find the hit marker sound in a child named "hitMarkerSound"
+        Transform hm = transform.Find("hitMarkerSound");
+        if (hm != null)
+            hitMarker = hm.GetComponent<AudioSource>();
+        else
+            Debug.LogWarning("hitMarkerSound child not found!");
+
+        // Cache starting sensitivity values
+        startLook = mouseSensitvity_notAiming;
+        startAim = mouseSensitvity_aiming;
+        startRun = mouseSensitvity_running;
+
+        // Initialize rotation tracking from MouseLookScript
+        rotationLastY = mls.currentYRotation;
+        rotationLastX = mls.currentCameraXRotation;
+
+        // Set initial gun position to rest position
+        currentGunPosition = restPlacePosition;
+    }
+
+    void Update()
+    {
+        Animations();
+        GiveCameraScriptMySensitvity();
+        PositionGun();
+        Shooting();
+        MeeleAttack();
+        LockCameraWhileMelee();
+        Sprint();
+        CrossHairExpansionWhenWalking();
+    }
+
+    void FixedUpdate()
+    {
+        RotationGun();
+        MeeleAnimationsStates();
+
+        // Adjust gun and camera FOV based on aiming state
+        if (Input.GetAxis("Fire2") != 0 && !reloading && !meeleAttack)
+        {
+            gunPrecision = gunPrecision_aiming;
+            recoilAmount_x = recoilAmount_x_;
+            recoilAmount_y = recoilAmount_y_;
+            recoilAmount_z = recoilAmount_z_;
+            currentGunPosition = Vector3.SmoothDamp(currentGunPosition, aimPlacePosition, ref gunPosVelocity, gunAimTime);
+            cameraComponent.fieldOfView = Mathf.SmoothDamp(cameraComponent.fieldOfView, cameraZoomRatio_aiming, ref cameraZoomVelocity, gunAimTime);
+            secondCamera.fieldOfView = Mathf.SmoothDamp(secondCamera.fieldOfView, secondCameraZoomRatio_aiming, ref secondCameraZoomVelocity, gunAimTime);
+        }
+        else
+        {
+            gunPrecision = gunPrecision_notAiming;
+            recoilAmount_x = recoilAmount_x_non;
+            recoilAmount_y = recoilAmount_y_non;
+            recoilAmount_z = recoilAmount_z_non;
+            currentGunPosition = Vector3.SmoothDamp(currentGunPosition, restPlacePosition, ref gunPosVelocity, gunAimTime);
+            cameraComponent.fieldOfView = Mathf.SmoothDamp(cameraComponent.fieldOfView, cameraZoomRatio_notAiming, ref cameraZoomVelocity, gunAimTime);
+            secondCamera.fieldOfView = Mathf.SmoothDamp(secondCamera.fieldOfView, secondCameraZoomRatio_notAiming, ref secondCameraZoomVelocity, gunAimTime);
+        }
+    }
+
+    // Pass gun-specific sensitivity settings to the MouseLookScript
+    void GiveCameraScriptMySensitvity()
+    {
+        mls.mouseSensitvity_notAiming = mouseSensitvity_notAiming;
+        mls.mouseSensitvity_aiming = mouseSensitvity_aiming;
+        mls.mouseSensitvity_running = mouseSensitvity_running;
+    }
+
+    // Adjust crosshair expansion based on player velocity and shooting status
+    void CrossHairExpansionWhenWalking()
+    {
+        if (player.GetComponent<Rigidbody>().linearVelocity.magnitude > 1 && Input.GetAxis("Fire1") == 0)
+        {
+            expandValues_crosshair += new Vector2(20, 40) * Time.deltaTime;
+            if (pmS.maxSpeed < runningSpeed)
+            {
+                expandValues_crosshair.x = Mathf.Clamp(expandValues_crosshair.x, 0, 10);
+                expandValues_crosshair.y = Mathf.Clamp(expandValues_crosshair.y, 0, 20);
+                fadeout_value = Mathf.Lerp(fadeout_value, 1, Time.deltaTime * 2);
+            }
+            else
+            {
+                fadeout_value = Mathf.Lerp(fadeout_value, 0, Time.deltaTime * 10);
+                expandValues_crosshair.x = Mathf.Clamp(expandValues_crosshair.x, 0, 20);
+                expandValues_crosshair.y = Mathf.Clamp(expandValues_crosshair.y, 0, 40);
+            }
+        }
+        else
+        {
+            expandValues_crosshair = Vector2.Lerp(expandValues_crosshair, Vector2.zero, Time.deltaTime * 5);
+            expandValues_crosshair.x = Mathf.Clamp(expandValues_crosshair.x, 0, 10);
+            expandValues_crosshair.y = Mathf.Clamp(expandValues_crosshair.y, 0, 20);
+            fadeout_value = Mathf.Lerp(fadeout_value, 1, Time.deltaTime * 2);
+        }
+    }
+
+    // Toggle sprinting: press Left Shift to switch between walking and running speeds
+    void Sprint()
+    {
+        if (Input.GetAxis("Vertical") > 0 && Input.GetAxisRaw("Fire2") == 0 && !meeleAttack && Input.GetAxisRaw("Fire1") == 0)
+        {
+            if (Input.GetKeyDown(KeyCode.LeftShift))
+            {
+                pmS.maxSpeed = (pmS.maxSpeed == walkingSpeed) ? runningSpeed : walkingSpeed;
+            }
+        }
+        else
+        {
+            pmS.maxSpeed = walkingSpeed;
+        }
+    }
+
+    // Check current melee and aiming states via animator
+    void MeeleAnimationsStates()
+    {
+        if (handsAnimator)
+        {
+            meeleAttack = handsAnimator.GetCurrentAnimatorStateInfo(0).IsName(meeleAnimationName);
+            aiming = handsAnimator.GetCurrentAnimatorStateInfo(0).IsName(aimingAnimationName);
+        }
+    }
+
+    // Trigger melee attack if Q is pressed and not already in a melee attack
+    void MeeleAttack()
+    {
+        if (Input.GetKeyDown(KeyCode.Q) && !meeleAttack)
+        {
+            StartCoroutine(AnimationMeeleAttack());
+        }
+    }
+
+    IEnumerator AnimationMeeleAttack()
+    {
+        if (handsAnimator)
+        {
+            handsAnimator.SetBool("meeleAttack", true);
+            yield return new WaitForSeconds(0.1f);
+            handsAnimator.SetBool("meeleAttack", false);
+        }
+    }
+
+    // While melee attack is active, reduce camera sensitivity; otherwise, restore defaults
+    void LockCameraWhileMelee()
+    {
+        if (meeleAttack)
+        {
+            mouseSensitvity_notAiming = 2;
+            mouseSensitvity_aiming = 1.6f;
+            mouseSensitvity_running = 1;
+        }
+        else
+        {
+            mouseSensitvity_notAiming = startLook;
+            mouseSensitvity_aiming = startAim;
+            mouseSensitvity_running = startRun;
+        }
+    }
+
+    // Update the gun’s position based on the camera position and recoil offsets
+    void PositionGun()
+    {
+        Vector3 targetPosition = mainCamera.transform.position
+            - (mainCamera.transform.right * (currentGunPosition.x + currentRecoilXPos))
+            + (mainCamera.transform.up * (currentGunPosition.y + currentRecoilYPos))
+            + (mainCamera.transform.forward * (currentGunPosition.z + currentRecoilZPos));
+
+        transform.position = Vector3.SmoothDamp(transform.position, targetPosition, ref gunPosVelocity, 0);
+
+        // Update camera recoil offset in the player movement script
+        pmS.cameraPosition = new Vector3(currentRecoilXPos, currentRecoilYPos, 0);
+
+        // Smoothly reduce recoil over time
+        currentRecoilZPos = Mathf.SmoothDamp(currentRecoilZPos, 0, ref velocity_z_recoil, recoilOverTime_z);
+        currentRecoilXPos = Mathf.SmoothDamp(currentRecoilXPos, 0, ref velocity_x_recoil, recoilOverTime_x);
+        currentRecoilYPos = Mathf.SmoothDamp(currentRecoilYPos, 0, ref velocity_y_recoil, recoilOverTime_y);
+    }
+
+    // Rotate the gun based on the camera’s rotation changes (simulating weapon weight)
+    void RotationGun()
+    {
+        rotationDeltaY = mls.currentYRotation - rotationLastY;
+        rotationDeltaX = mls.currentCameraXRotation - rotationLastX;
+
+        rotationLastY = mls.currentYRotation;
+        rotationLastX = mls.currentCameraXRotation;
+
+        angularVelocityY = Mathf.Lerp(angularVelocityY, rotationDeltaY, Time.deltaTime * 5);
+        angularVelocityX = Mathf.Lerp(angularVelocityX, rotationDeltaX, Time.deltaTime * 5);
+
+        gunWeightX = Mathf.SmoothDamp(gunWeightX, mls.currentCameraXRotation, ref velocityGunRotate.x, rotationLagTime);
+        gunWeightY = Mathf.SmoothDamp(gunWeightY, mls.currentYRotation, ref velocityGunRotate.y, rotationLagTime);
+
+        transform.rotation = Quaternion.Euler(gunWeightX + (angularVelocityX * forwardRotationAmount.x),
+                                              gunWeightY + (angularVelocityY * forwardRotationAmount.y),
+                                              0);
+    }
+
+    // Recoil calculation: adjusts recoil offsets and influences camera rotation
+    void RecoilMath()
+    {
+        currentRecoilZPos -= recoilAmount_z;
+        currentRecoilXPos -= (Random.value - 0.5f) * recoilAmount_x;
+        currentRecoilYPos -= (Random.value - 0.5f) * recoilAmount_y;
+
+        mls.wantedCameraXRotation -= Mathf.Abs(currentRecoilYPos * gunPrecision);
+        mls.wantedYRotation -= (currentRecoilXPos * gunPrecision);
+
+        expandValues_crosshair += new Vector2(6, 12);
+    }
+
+    // Handle shooting input based on gun style (automatic vs nonautomatic)
+    void Shooting()
+    {
+        if (!meeleAttack)
+        {
+            if (currentStyle == GunStyles.nonautomatic && Input.GetButtonDown("Fire1"))
+            {
+                ShootMethod();
+            }
+            else if (currentStyle == GunStyles.automatic && Input.GetButton("Fire1"))
+            {
+                ShootMethod();
+            }
+        }
+        waitTillNextFire -= roundsPerSecond * Time.deltaTime;
+    }
+
+    // Rounds per second (set externally)
+    public float roundsPerSecond;
+
+    // Instantiate bullet, spawn muzzle flash, play sounds, apply recoil and update ammo
+    void ShootMethod()
+    {
+        if (waitTillNextFire <= 0 && !reloading && pmS.maxSpeed < 5)
+        {
+            if (bulletsInTheGun > 0)
+            {
+                int randomIndex = Random.Range(0, muzzelFlash.Length);
+                if (bullet != null)
+                    Instantiate(bullet, bulletSpawnPlace.transform.position, bulletSpawnPlace.transform.rotation);
+                else
+                    Debug.Log("Missing the bullet prefab");
+
+                holdFlash = Instantiate(muzzelFlash[randomIndex], muzzelSpawn.transform.position,
+                                        muzzelSpawn.transform.rotation * Quaternion.Euler(0, 0, 90));
+                holdFlash.transform.parent = muzzelSpawn.transform;
+
+                if (shoot_sound_source)
+                    shoot_sound_source.Play();
+                else
+                    Debug.Log("Missing Shoot Sound Source.");
+
+                RecoilMath();
+                waitTillNextFire = 1;
+                bulletsInTheGun -= 1;
+            }
+            else
+            {
+                StartCoroutine(Reload_Animation());
+            }
+        }
+    }
+
+    // Coroutine to handle reload animation and ammo refill logic
+    [Header("Reload Settings")]
+    [Tooltip("Time delay after reload animation before bullets are refilled.")]
+    public float reloadChangeBulletsTime;
+    IEnumerator Reload_Animation()
+    {
+        if (bulletsIHave > 0 && bulletsInTheGun < amountOfBulletsPerLoad && !reloading)
+        {
+            if (reloadSound_source != null && !reloadSound_source.isPlaying)
+                reloadSound_source.Play();
+            else
+                Debug.Log("Missing Reload Sound Source.");
+
+            if (handsAnimator)
+                handsAnimator.SetBool("reloading", true);
+            yield return new WaitForSeconds(0.5f);
+            if (handsAnimator)
+                handsAnimator.SetBool("reloading", false);
+
+            yield return new WaitForSeconds(reloadChangeBulletsTime - 0.5f);
+            if (!meeleAttack && pmS.maxSpeed != runningSpeed)
+            {
+                if (player.GetComponent<PlayerMovementScript>()._freakingZombiesSound)
+                    player.GetComponent<PlayerMovementScript>()._freakingZombiesSound.Play();
+                else
+                    Debug.Log("Missing Freaking Zombies Sound");
+
+                float needed = amountOfBulletsPerLoad - bulletsInTheGun;
+                if (bulletsIHave >= needed)
+                {
+                    bulletsIHave -= needed;
+                    bulletsInTheGun = amountOfBulletsPerLoad;
+                }
+                else
+                {
+                    bulletsInTheGun += bulletsIHave;
+                    bulletsIHave = 0;
+                }
+            }
+            else
+            {
+                reloadSound_source.Stop();
+                Debug.Log("Reload interrupted via melee attack");
+            }
+        }
+    }
+
+    // OnGUI displays ammo count and draws the crosshair
+    void OnGUI()
+    {
+        if (HUD_bullets == null)
+        {
+            try
+            {
+                HUD_bullets = GameObject.Find("HUD_bullets").GetComponent<TextMesh>();
+            }
+            catch (System.Exception ex)
+            {
+                Debug.Log("Couldn't find HUD_bullets: " + ex.StackTrace);
+            }
+        }
+        if (mls != null && HUD_bullets != null)
+            HUD_bullets.text = bulletsIHave.ToString() + " - " + bulletsInTheGun.ToString();
+
+        DrawCrosshair();
+    }
+
+    // Draw crosshair using GUI.DrawTexture and helper methods for positioning
+    void DrawCrosshair()
+    {
+        GUI.color = new Color(GUI.color.r, GUI.color.g, GUI.color.b, fadeout_value);
+        if (Input.GetAxis("Fire2") == 0)
+        {
+            // Left crosshair
+            GUI.DrawTexture(new Rect(vec2(left_pos_crosshair).x + position_x(-expandValues_crosshair.x) + Screen.width / 2,
+                Screen.height / 2 + vec2(left_pos_crosshair).y,
+                vec2(size_crosshair_horizontal).x, vec2(size_crosshair_horizontal).y), vertical_crosshair);
+            // Right crosshair
+            GUI.DrawTexture(new Rect(vec2(right_pos_crosshair).x + position_x(expandValues_crosshair.x) + Screen.width / 2,
+                Screen.height / 2 + vec2(right_pos_crosshair).y,
+                vec2(size_crosshair_horizontal).x, vec2(size_crosshair_horizontal).y), vertical_crosshair);
+            // Top crosshair
+            GUI.DrawTexture(new Rect(vec2(top_pos_crosshair).x + Screen.width / 2,
+                Screen.height / 2 + vec2(top_pos_crosshair).y + position_y(-expandValues_crosshair.y),
+                vec2(size_crosshair_vertical).x, vec2(size_crosshair_vertical).y), horizontal_crosshair);
+            // Bottom crosshair
+            GUI.DrawTexture(new Rect(vec2(bottom_pos_crosshair).x + Screen.width / 2,
+                Screen.height / 2 + vec2(bottom_pos_crosshair).y + position_y(expandValues_crosshair.y),
+                vec2(size_crosshair_vertical).x, vec2(size_crosshair_vertical).y), horizontal_crosshair);
+        }
+    }
+
+    // Helper methods for GUI positioning (percentage to pixel conversion)
+    private float position_x(float var)
+    {
+        return Screen.width * var / 100;
+    }
+    private float position_y(float var)
+    {
+        return Screen.height * var / 100;
+    }
+    private Vector2 vec2(Vector2 _vec2)
+    {
+        return new Vector2(Screen.width * _vec2.x / 100, Screen.height * _vec2.y / 100);
+    }
+
+    // Update animation parameters and trigger reload on input
+    void Animations()
+    {
+        if (handsAnimator)
+        {
+            reloading = handsAnimator.GetCurrentAnimatorStateInfo(0).IsName(reloadAnimationName);
+            handsAnimator.SetFloat("walkSpeed", pmS.currentSpeed);
+            handsAnimator.SetBool("aiming", Input.GetButton("Fire2"));
+            handsAnimator.SetInteger("maxSpeed", pmS.maxSpeed);
+            if (Input.GetKeyDown(KeyCode.R) && pmS.maxSpeed < 5 && !reloading && !meeleAttack)
+            {
+                StartCoroutine(Reload_Animation());
+            }
+        }
+    }
 }
