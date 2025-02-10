@@ -1,199 +1,81 @@
 ﻿using UnityEngine;
-using System.Collections;
 
+public class SimpleFPSController : MonoBehaviour
+{
+    [Header("Movement Settings")]
+    public float walkSpeed = 5f;           // Base walking speed
+    public float sprintMultiplier = 2f;    // Sprint speed multiplier
 
-public class MouseLookScript : MonoBehaviour {
+    [Header("Mouse Look Settings")]
+    public float mouseSensitivity = 2f;    // Mouse sensitivity factor
+    public float verticalLookLimit = 80f;  // Maximum angle for vertical rotation
 
-	[HideInInspector]
-	public Transform myCamera;
-	/*
-	 * Hiding the cursor.
-	 */
-	void Awake(){
-		Cursor.lockState = CursorLockMode.Locked;
-		myCamera = GameObject.FindGameObjectWithTag("MainCamera").transform;
-	}
+    private CharacterController characterController;
+    private Transform cameraTransform;
+    private float verticalRotation = 0f;
 
-	/*
-	* Locking the mouse if pressing L.
-	* Triggering the headbob camera omvement if player is faster than 1 of speed
-	*/
-	void  Update(){
+    void Start()
+    {
+        // Get the CharacterController attached to the player
+        characterController = GetComponent<CharacterController>();
+        if (characterController == null)
+        {
+            Debug.LogError("No CharacterController found on this GameObject.");
+        }
+        // Get the main camera (assumed to be a child of this GameObject)
+        cameraTransform = Camera.main.transform;
+        if (cameraTransform.parent != transform)
+        {
+            Debug.LogWarning("The Main Camera should be a child of the player object for proper rotation.");
+        }
+        // Lock and hide the cursor for an immersive FPS experience
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+    }
 
-		MouseInputMovement();
+    void Update()
+    {
+        HandleMouseLook();
+        HandleMovement();
+    }
 
-		if (Input.GetKeyDown (KeyCode.L)) {
-			Cursor.lockState = CursorLockMode.Locked;
+    // Handles vertical camera rotation and horizontal player rotation.
+    void HandleMouseLook()
+    {
+        // Get mouse input for horizontal and vertical movement.
+        float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity;
+        float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity;
 
-		}
-		deltaTime += (Time.deltaTime - deltaTime) * 0.1f;
+        // Adjust and clamp vertical rotation.
+        verticalRotation -= mouseY;
+        verticalRotation = Mathf.Clamp(verticalRotation, -verticalLookLimit, verticalLookLimit);
+        // Apply the vertical rotation to the camera only.
+        cameraTransform.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
 
-		if(GetComponent<PlayerMovementScript>().currentSpeed > 1)
-			HeadMovement ();
+        // Apply horizontal rotation to the player.
+        transform.Rotate(0f, mouseX, 0f);
+    }
 
-	}
+    // Handles WASD movement and sprinting.
+    void HandleMovement()
+    {
+        float moveX = Input.GetAxis("Horizontal"); // A/D or left/right arrow keys
+        float moveZ = Input.GetAxis("Vertical");   // W/S or up/down arrow keys
 
-	[Header("Z Rotation Camera")]
-	[HideInInspector] public float timer;
-	[HideInInspector] public int int_timer;
-	[HideInInspector] public float zRotation;
-	[HideInInspector] public float wantedZ;
-	[HideInInspector] public float timeSpeed = 2;
+        // If LeftShift is held, sprint by multiplying the walkSpeed.
+        bool sprint = Input.GetKey(KeyCode.LeftShift);
+        float speed = sprint ? walkSpeed * sprintMultiplier : walkSpeed;
 
-	[HideInInspector] public float timerToRotateZ;
-	/*
-	* Switching Z rotation and applying to camera in camera Rotation().
-	*/
-	void HeadMovement(){
-		timer += timeSpeed * Time.deltaTime;
-		int_timer = Mathf.RoundToInt (timer);
-		if (int_timer % 2 == 0) {
-			wantedZ = -1;
-		} else {
-			wantedZ = 1;
-		}
+        // Calculate the movement vector relative to the player's orientation.
+        Vector3 move = transform.right * moveX + transform.forward * moveZ;
 
-		zRotation = Mathf.Lerp (zRotation, wantedZ, Time.deltaTime * timerToRotateZ);
-	}
-	[Tooltip("Current mouse sensivity, changes in the weapon properties")]
-	public float mouseSensitvity = 0;
-	[HideInInspector]
-	public float mouseSensitvity_notAiming = 300;
-	[HideInInspector]
-	public float mouseSensitvity_aiming = 50;
+        // Move the player using the CharacterController component.
+        characterController.Move(move * speed * Time.deltaTime);
 
-/*
-* FixedUpdate()
-* If aiming set the mouse sensitvity from our variables and vice versa.
-*/
-void FixedUpdate(){
-
-	/*
-	 * Reduxing mouse sensitvity if we are aiming.
-	 */
-	if(Input.GetAxis("Fire2") != 0){
-		mouseSensitvity = mouseSensitvity_aiming;
-	}
-	else if(GetComponent<PlayerMovementScript>().maxSpeed > 5){
-		mouseSensitvity = mouseSensitvity_notAiming;
-	}
-	else{
-		mouseSensitvity = mouseSensitvity_notAiming;
-	}
-
-
-	ApplyingStuff();
-
-
-}
-
-
-private float rotationYVelocity, cameraXVelocity;
-[Tooltip("Speed that determines how much camera rotation will lag behind mouse movement.")]
-public float yRotationSpeed, xCameraSpeed;
-
-[HideInInspector]
-public float wantedYRotation;
-[HideInInspector]
-public float currentYRotation;
-
-[HideInInspector]
-public float wantedCameraXRotation;
-[HideInInspector]
-public float currentCameraXRotation;
-
-[Tooltip("Top camera angle.")]
-public float topAngleView = 60;
-[Tooltip("Minimum camera angle.")]
-public float bottomAngleView = -45;
-/*
- * Upon mouse movenet it increases/decreased wanted value. (not actually moving yet)
- * Clamping the camera rotation X to top and bottom angles.
- */
-void MouseInputMovement(){
-
-	wantedYRotation += Input.GetAxis("Mouse X") * mouseSensitvity;
-
-	wantedCameraXRotation -= Input.GetAxis("Mouse Y") * mouseSensitvity;
-
-	wantedCameraXRotation = Mathf.Clamp(wantedCameraXRotation, bottomAngleView, topAngleView);
-
-}
-
-/*
- * Smoothing the wanted movement.
- * Calling the waeponRotation form here, we are rotating the waepon from this script.
- * Applying the camera wanted rotation to its transform.
- */
-void ApplyingStuff(){
-
-	currentYRotation = Mathf.SmoothDamp(currentYRotation, wantedYRotation, ref rotationYVelocity, yRotationSpeed);
-	currentCameraXRotation = Mathf.SmoothDamp(currentCameraXRotation, wantedCameraXRotation, ref cameraXVelocity, xCameraSpeed);
-
-	WeaponRotation();
-
-	transform.rotation = Quaternion.Euler(0, currentYRotation, 0);
-	myCamera.localRotation = Quaternion.Euler(currentCameraXRotation, 0, zRotation);
-
-}
-
-private Vector2 velocityGunFollow;
-private float gunWeightX,gunWeightY;
-[Tooltip("Current weapon that player carries.")]
-[HideInInspector]
-public GameObject weapon;
-private GunScript gun;
-/*
- * Rotating current weapon from here.
- * Checkig if we have a weapon, if we do, if its a gun it iwll fetch the gun and rotate it accordingly,
- * same goes for the sword.
- * Incase we dont have a weapon or gun or it didnt find it, it will write into the console that it cant find a weapon.
- */
-void WeaponRotation(){
-	if(!weapon){
-		weapon = GameObject.FindGameObjectWithTag("Weapon");
-		if(weapon){
-			if(weapon.GetComponent<GunScript>()){
-				try{
-					gun = GameObject.FindGameObjectWithTag("Weapon").GetComponent<GunScript>();
-				}catch(System.Exception ex){
-					print("gun not found->"+ex.StackTrace.ToString());
-				}
-			}
-		}
-	}
-
-}
-
-float deltaTime = 0.0f;
-[Tooltip("Shows FPS in top left corner.")]
-public bool showFps = true;
-/*
-* Shows fps if its set to true.
-*/
-void OnGUI(){
-
-	if(showFps){
-		FPSCounter();
-	}
-
-}
-/*
-* Calculating real fps because unity status tab shows too much fps even when its not that mutch so i made my own.
-*/
-void FPSCounter(){
-	int w = Screen.width, h = Screen.height;
-
-	GUIStyle style = new GUIStyle();
-
-	Rect rect = new Rect(0, 0, w, h * 2 / 100);
-	style.alignment = TextAnchor.UpperLeft;
-	style.fontSize = h * 2 / 100;
-	style.normal.textColor = Color.white;
-	float msec = deltaTime * 1000.0f;
-	float fps = 1.0f / deltaTime;
-	string text = string.Format("{0:0.0} ms ({1:0.} fps)", msec, fps);
-	GUI.Label(rect, text, style);
-}
-
+        // Optionally, apply gravity if the player is not grounded.
+        if (!characterController.isGrounded)
+        {
+            characterController.Move(Physics.gravity * Time.deltaTime);
+        }
+    }
 }
