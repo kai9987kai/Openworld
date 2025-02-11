@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: cd38b02955c5645d4a1ceed928550331
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 154558
+  packageName: Surfer Mini Van with Cartoon Style Option
+  packageVersion: 1.0
+  assetPath: Assets/Asset_SurferVan/Materials/texSurferCartoon.mat
+  uploadId: 344904
