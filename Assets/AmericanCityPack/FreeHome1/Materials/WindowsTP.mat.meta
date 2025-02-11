@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: c3b557d91ad08bc48b559c1d401af1f4
+timeCreated: 1520110790
+licenseType: Store
+NativeFormatImporter:
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 112900
+  packageName: Brooklyn Home
+  packageVersion: 1.0
+  assetPath: Assets/AmericanCityPack/FreeHome1/Materials/WindowsTP.mat
+  uploadId: 232968

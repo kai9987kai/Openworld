@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: e39c5a560d87f1c449561e0c57818086
+timeCreated: 1520116181
+licenseType: Store
+NativeFormatImporter:
+  mainObjectFileID: 100100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 112900
+  packageName: Brooklyn Home
+  packageVersion: 1.0
+  assetPath: Assets/AmericanCityPack/FreeHome1/Prefabs/Home2_LODGroup.prefab
+  uploadId: 232968
